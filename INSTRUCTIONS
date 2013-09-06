@@ -1,0 +1,145 @@
+# These are my notes written about this code in order to help myself and others
+
+# Announcer.py:
+This is eventually going to become the streamboss arbiter/manager/cop system.
+Theoretically whoever is allowed to connect to the Rabbit server has credentials
+and has therefore been in some way screened.
+
+There is a good deal of trust built into the system as currently stands.
+Announcer understands a handful of simple requests at the present:
+(N)ew requests that the sender be allowed to broadcast messages using a given name
+as its routing key. Supposedly, freq should indicated the anticipated samplerate.
+process is probably meaningless for this but thus far I desire to keep the input
+and functions (x and f(x)) streams in a single streams table. There is an israw column
+in the database scheme for this; That should probably be implemented.
+
+The state tracking scheme (represented by /status/ in the table) basically indicates
+how alive the stream is (0 = probably dead, 1 = disconnected, 2 = connected but inactive,
+3 = sending samples at indicated rate). The send frequency is not currently tracked and
+it seems I've defaulted to just setting the state to 2 (warm)...
+
+A frequency of 0 indicates aperiodic.
+
+The announcer currently has some degree of dysphoria between what the callback function itself
+computes and what the instream_* functions compute...
+
+I have noticed that there is a distinct tendency to lose the DB connection after long inactivity,
+This happens to mysql text console sessions as well (though they are smart enough to recover/reconnect)
+so i believe a DB keepalive behavior is needed unless mysql can be reconfigured.
+
+There are some issues with the connect vs reconnect system. There shoul be a a single call that 
+will try new then fall back to reconnect given a pre-existing token... Somehow it should not
+be entirely on the user to figure that out. it would also be nice if there were some more & meaningful error
+return messages.
+
+############## console_stream.py
+This is an example of fairly close to the simplest working program that uses the stream adapter framework.
+It connects and pumps stdin into a stream.
+
+This code is quite fragile and sys.stdin.readline() is brain damaged.
+
+The whole pikathread idea I think needs to be somehow overhauled - every bloody python crash leaves it hanging 
+out in the backgrond like a zombie. There's probably (certainly?) a way in Python for thread A to detect crashes in thread
+B and take action based thereon.
+
+############### debug_spy.py:
+This is sort of a useful little thing. It queries the stream DB to connect to every open stream on start and the watches New/Delete
+messages on the announce broadcast to remain connected to all streams.
+
+So, I've noticed that there's a bit of code that repeats multiple times throughout this stuff, the "key=value" matching engine.
+that should be combined into a single thing or somehow deduplicated.
+
+################# FileChunker class
+The file chunker implements the dumbest file transfer protocol imaginable on top of the messaging layer in Rabbit.
+
+Currently the hs uploader uses it, but that code reall should try to just connect to S3 or whatever cloud resource system /first/
+rather than barfing thousands of messages onto the Rabbit exchange router. That being said, Rabbit handled the assault well.
+
+Right now it base64s the data to be sent because python is rabidly binary-phobic.
+
+################# hs_transmit_dir.py
+This begins the current HS stream processor.
+
+Note that the S3 systme probably won't work efficiently for this because it requires that the whole file move from host to Amazon
+then back to the next host. This /works/, BUT. In any case the cloud plugin is changeable.
+
+Note: Implement a cloud interface class to make any changeover easier. Nick's code was exquisitely easy to crib for the S3 system though
+
+This code, ah, anyway, create a Rabbit sensor adapter and then trawls the PWD for all hypercubes and uploads them as a sequence. Doing
+do over the Rabbit system generates an enormous amount of traffic (1886 messages to send a single hypercube using 48KB/message)
+
+It looks in cal_instruct.txt which has to contain on its first line key=value pairs for the keys x, y, radius, and a filename for 
+calibration panel's reflectivity profile as a function of wavelength. THis is dumb but it worked for prototyping purposes.
+
+More generally the user needs to be able to easily set this. But the HS data is presumably on their mahine anyway so maybe it's not a huge deal.
+
+Eventually we will need to be able to compare cube times with the list of dark frame times and send both the nearest dark frame to any
+given cube as well instructions indicating "also substract a dark frame from this image."
+
+This is te currently written comment block in the code and Im keeping it
+# We will follow a simpleminded format of sending what we need:
+# SEQUENCE_START key
+# CALPANEL key
+# <upload calibration panel profile>, small file
+# CUBES_ONLY key
+# CUBE key xcal=XX ycal=YY rcal=RR date=TT
+# <upload cube 0>
+# ...
+# SEQUENCE_END key
+That's not exactly what's written. The above is correct.
+
+So all of these daemony things I think look at a checklife file that has either 1 or not-1 as its first byte. I use this as a primitive form of process control. I'm sure you guys can do better.
+
+################## hs_cloud_receive.py
+This is the first part of the in-cloud system for the hyperspectral processing stream.
+
+I believe I remark somewher ein the code, this should attempt to work with the "client"-side directory trawler to send data via some side-channel that doesnt involve burdening the stream serice with thousands of messages. An S3 connection wuold be ideal.
+
+In any case, once it gets here the cubes are officially in the cloud and this processing element emits messages containing S3 keys to access the HS data.
+
+################## hs_calibrate.py:
+The third step of the stream processing system for hyperspectral data.
+
+This is still more than a little bit hacked together; It relies ona pre-existing radiometric calibration file, for one.
+
+However HSCal is 100% script-driveable so this can be in principle made to do exactly anything that I can do on from the desktop.
+
+IMPORTANT: This has successfully run all the way to this point and generated calibrated data and processed images.
+
+Search the S3 that this account connected to (e.g. run execfile('inspectS3.py')) and look at the stuff in the keever_test bucket.
+
+PROBLEM: I don't know quite how to make this detect that hscal is or is not done actually processing things. I use a blind 10s wait once
+the data has arrived.
+
+PROBLEM: It is impractical to download entire calibrated hypercubes just to access tiny subsets of them (like single pixels or patches)
+
+This emits a CUBE_PROCESSED message which should theoretically go to the regression analysis stage.
+
+##################
+HOW TO WRITE THE REGRESSION ANALYSER
+
+I may or may not make it to writing the regression analyzer myself; Here are instruction on how to do it yourself if I fail
+
+The essence of what is going is as follows:
+
+The hyperspectral imager remotely records images in what we may write as (image coordinates, wavelength).
+
+We have also direct measurements taken by Jim Adiamec of leaves and greenery present in the hyperspectral imagery at nearly the same time as the images were recorded using a chlorphyll meter.
+
+THe objective is to combine reflectance calibrated data for the pixels corresponding to those leaves with the measured chlorophyll abundances in Jim's measurements to determine if the SOC imager data can be used to calculate chlorpyll abundance values that agree with Jim's meausurements.
+
+The regression analyzer step then will require (of course) the chlorophyll meausrements in suitable format, as well as the image coordinates each sequence of measurments cooresponds to.
+
+I am operating under the assumption that Jim recorded in his yellow notebook (or elsewhere that is known to still extant staff) the precise locations that he sampled which can then be pinpointed in the HS imagery.
+
+It is at this juncture that the need to archive and make available previously recorded data is highly apparent. In other words our processing is not time-independent.
+
+For small scalar measurements such as taken directly by Jim we can simply upload and trawl through the entire secondary dataset on a millisecond's whim but this will not always be the case.
+
+###############
+#MORE CODE
+I wish to once again emphasize a key point about rabbit - load balancing occurs across clients connected to /a/ queue, not across queues. I.e. N queues bound to one routing_key behave as a multicast router, where as N clients bound to one queue behave as a load balancer.
+
+There should be a keyword insertable into the streams database indicating that certain queues are processable in a task paralle manner.
+
+
