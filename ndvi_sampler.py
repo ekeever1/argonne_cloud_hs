@@ -48,11 +48,13 @@ debug=0, https_connection_factory=None, calling_format = boto.s3.connection.Ordi
 # FIXME: This is hardcoded. That's probably bad...
 bukkit = conn.get_bucket('keever_test')
 # So I'm naming things after elementary color-interacting particles it seems.
-kaon = Key(bukkit)
+pion = Key(bukkit)
 
 ################################################################################
 # Set up the bits that handle the incoming files and parse the hs_transmit_dir messages
 # Let's teleport some state up into this hizzy...
+
+
 
 def keyval_get(key, chunk):
     x = string.split(chunk, " ")
@@ -67,16 +69,26 @@ def ndvi_handler(method, props, body):
         return
 
     # Download the key_ndvi_exr
-    thekey = ndvi_handler 
+    keyprefix=X[1]+"_"+X[2]
+    pion.key = keyprefix+"_ndviexr"
+    pion.get_contents_to_filename("NDVI.exr")
 
+    # FIXME: Ugly hack, I hardcoded the polygon file to use into this VM image.
+    # FIXME: COrners are definitely being cut at this point.
     # Pass it to the ndvi sampler
-    
+    call(['./ndviSampler','polyfile.csv','NDVI.exr']) 
 
     # Store [time, ndvi_mean] in the sql database
-    db = sql.connect('vm-110.alamo.futuregrid.org','root','root','ndvibase')
+    DBHOST = os.environ['STREAMBOSS_DBHOST']
+    DBUSER = os.environ['STREAMBOSS_DBUSER']
+    DBPASS = os.environ['STREAMBOSS_DBPASS']
+
+    db = sql.connect(DBHOST, DBUSER, DBPASS, 'Archive')
     curs = db.cursor()
-    curs.execute("INSERT INTO ndviA(time, measured) VALUES (%s, %s)\n" % (cubetime, cubemean) )
-    
+    #FIXME: HACK hack hack hack ugly hack, hardcoding the space coordinate of origin to the MCS 6th floor north balcony site
+    curs.execute("INSERT INTO ndvi_meas (latitude, longitude, altitude, unixtime, ndvi) VALUES (%f, %f, %f, %s, %s)\n" % (41.7184833, -87.983466, 270, cubetime, cubemean) )
+    curs.commit()
+    cloud.sendStreamItem("NEW db=Archive table=ndvi_meas")
 
 ################################################################################
 # Time to get a Streamboss connection and boost this turkey off the ground...

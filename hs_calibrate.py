@@ -103,8 +103,9 @@ def calibrationHandler(method, props, body):
         f.write("calib referU point=<%s,%s> radius=%s checkshade=1\n" % (xcal, ycal, rcal))
         f.write("planes new R=55 G=34 B=13\n")
         f.write("img rgb file=thecube_rgb.tiff\n")
-        f.write("img hamada prefix=thecube fmt=tiff\n")
-        f.write("cube save file=cubeout.nc\n")
+        f.write("img hamada prefix=thecube fmt=exr\n")
+#        f.write("cube save file=cubeout.nc\n")
+# We don't actually have space for that on the default VM...
         f.flush() # Let it digest this for a bit...
 
         print "Sent commands to hscal"
@@ -112,13 +113,13 @@ def calibrationHandler(method, props, body):
         time.sleep(10); # Ample time for digestion to complete
 
         # Okay images are coming out
-        kaon.key = "%s_eyetiff" % (seqKey, )
+        kaon.key = "%s_%s_eyetiff" % (seqKey, cubenum )
         kaon.set_contents_from_filename("thecube_rgb.tiff")
-        kaon.key = "%s_ndvitiff" % (seqKey, )
-        kaon.set_contents_from_filename("thecube_vegindex.tiff");
+        kaon.key = "%s_%s_ndviexr" % (seqKey, cubenum )
+        kaon.set_contents_from_filename("thecube_vegindex.exr");
        # Oy, this is a big one...
-        kaon.key = "%s_calibbed_%s.nc" % (seqKey, cubenum, )
-        kaon.set_contents_from_filename("cubeout.nc")
+#        kaon.key = "%s_%s_calibbed.nc" % (seqKey, cubenum, )
+#        kaon.set_contents_from_filename("cubeout.nc")
         
         cloud.sendStreamItem("CUBE_PROCESSED %s %s" % (seqKey, cubenum) )
 

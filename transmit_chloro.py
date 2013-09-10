@@ -13,7 +13,7 @@ print "Input chlorophyll data file to upload: ",
 cf = sys.stdin.readline()
 
 try:
-    chloro = open(cf,'r')
+    chloro = open(string.strip(cf),'r')
 except:
     print "Couldn't open "+cf+" for read. Try again."
     quit()
@@ -24,7 +24,7 @@ sender.connectToExchange(os.environ['STREAMBOSS_RABBITMQ_HOST'], os.environ['STR
 streamkeyfile = []
 
 try:
-    streamkeyfile = open('._chloro_key.txt','r')
+    streamkeyfile = open('./chloro_key.txt','r')
     streamKey = streamkeyfile.readline() # Try to get the original token from its totally secure plaintext file
     sender.streamReconnect(streamKey) # Attempt reconnect
     sender.waitForPikaThread()
@@ -50,15 +50,15 @@ def keyvalue_get(key, line, defaultval):
 # Assume we have a stream open now. We should. If we don't something's boned.
 
 # Initialize the values we are going to upload
-time  = 0
+samptime  = 0
 lat   = 999
 long  = 999
 alt   = 999;
 value = -1
 
 for X in chloro:
-    S = split(X,' ')
-    if (strip(S[0]) == "position"):
+    S = string.split(X,' ')
+    if (string.strip(S[0]) == "position"):
         v = keyvalue_get("lat", X, 999)
         if(v == 999):
             continue
@@ -72,12 +72,12 @@ for X in chloro:
             continue
         alt = float(v)
 
-    if (strip(S[0]) == "time"):
-        time = time.mktime(time.strptime(string.strip(S[1]), "%Y-%m-%d_%H:%M:%S"))
+    if (string.strip(S[0]) == "time"):
+        samptime = time.mktime(time.strptime(string.strip(S[1]), "%Y-%m-%d_%H:%M:%S"))
 
-    if (strip(S[0]) == "value"): # This is the money!
+    if (string.strip(S[0]) == "value"): # This is the money!
         value = float(string.strip(S[1]))
-        sender.sendStreamItem("SAMPLE latitude=%s longitude=%s alt=%s time=%s value=%s" % (lat, long, alt, time, value)
+        sender.sendStreamItem("SAMPLE latitude=%s longitude=%s alt=%s time=%s value=%s" % (lat, long, alt, samptime, value) )
 
 sender.streamShutdown(1)
 sender.waitForPikaThread()

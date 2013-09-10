@@ -33,33 +33,10 @@ import RabbitAdapter
 import FileChunker
 import time
 import string
-
-################################################################################
-# This is the magic cribbed unaltered from Nick's bucket_getter.py code
-# I am lost if this doesn't work
-# Get an S3 connection
-access_key_id = os.environ['AWS_ACCESS_KEY_ID']
-secret_access_key = os.environ['AWS_SECRET_ACCESS_KEY']
-##Connecting to cloud storage##
-conn=boto.s3.connection.S3Connection(aws_access_key_id=access_key_id, aws_secret_access_key=secret_access_key, #Connecting to Cumulus
-is_secure=False, port=8888, host='svc.uc.futuregrid.org',
-debug=0, https_connection_factory=None, calling_format = boto.s3.connection.OrdinaryCallingFormat())
-
-# FIXME: This is hardcoded. That's probably bad...
-bukkit = conn.get_bucket('keever_test')
-# So I'm naming things after elementary color-interacting particles it seems.
-kaon = Key(bukkit)
+import MySQLdb as sql
 
 ################################################################################
 # Set up the bits that handle the incoming files and parse the hs_transmit_dir messages
-# Let's teleport some state up into this hizzy...
-cubeSequenceKey = -1
-currentAction   = 0 # 0 = nothing, 1 = getting cal panel, 2 = getting cube
-cubesInSequence = 0
-sequenceInfo    = ""
-
-# Prepare a chunker to receive bulk transfers
-chunker = FileChunker.chunkReceiver()
 
 def keyval_get(key, chunk):
     x = string.split(chunk, " ")
@@ -71,12 +48,6 @@ def keyval_get(key, chunk):
 
 # This will be our callback to handle incoming messages
 def chloroSampleHandler(method, props, body):
-    # I don't give a flaming shit any more, JUST WORK YOU FUGGING WRETCHED TURDBOMB
-    global cubeSequenceKey
-    global currentAction
-    global cubesInSequence
-    global sequenceInfo
-
     X = string.split(body, ' ')
     if (X[0] == "SAMPLE"):
         DBHOST = os.environ['STREAMBOSS_DBHOST']
@@ -84,17 +55,16 @@ def chloroSampleHandler(method, props, body):
         DBPASS = os.environ['STREAMBOSS_DBPASS']
 
         lat   = keyval_get("latitude", body)
-        long  = keyval_get("longitude", body)
+        lon   = keyval_get("longitude", body)
         alt   = keyval_get("alt", body)
         unixt = keyval_get("time", body)
         chval = keyval_get("value", body)
 
         db = sql.connect(DBHOST, DBUSER, DBPASS, 'Archive')
         curs = db.cursor()
-        curs.execute("INSERT INTO chloro_meas(latitude, longitude, altitude, unixtime, chloro) values (%s, %s, %s, %s, %s)\n" % (lat, long, alt, unixt, chval) );
+        curs.execute("INSERT INTO chloro_meas(latitude, longitude, altitude, unixtime, chloro) values (%s, %s, %s, %s, %s)\n" % (lat, lon, alt, unixt, chval) )
         cloud.sendStreamItem("NEW db=Archive table=chloro_meas")
-
-
+        db.commit()
 
 ################################################################################
 # Time to get a Streamboss connection and boost this turkey off the ground...
@@ -103,11 +73,20 @@ def chloroSampleHandler(method, props, body):
 
 cloud = RabbitAdapter.CloudAdapter()
 # FIXME: No security here. That should be unbroked at some point.
-cloud.connectToExchange(os.environ['STREAMBOSS_RABBITMQ_HOST'], os.environ['STREAMBOSS_RABBITMQ_USER'], os.environ['STREAMBOSS_RABBITMQ_PASSWORD'])
+result = cloud.connectToExchange(os.environ['STREAMBOSS_RABBITMQ_HOST'], os.environ['STREAMBOSS_RABBITMQ_USER'], os.environ['STREAMBOSS_RABBITMQ_PASSWORD'])
+if result == False:
+    cloud.shutdownRequested = True
+    print "Failed to connect to exchange; Exiting."
+    quit()
 
 #cloud.setRxCallback(cubestreamHandler)
 cloud.streamAnnounce('chloro_upload', 'chlorophyll_upload')
 cloud.waitForPikaThread()
+
+if cloud.rpc_result == False:
+    cloud.shutdownRequested = True
+    print "Failed to announce my stream chloro_upload. Exiting."
+    quit()
 
 cloud.streamSubscribe("forest_chloro_readings")
 
@@ -115,7 +94,8 @@ cloud.streamSubscribe("forest_chloro_readings")
 while True:
     while len(cloud.receiveFifo) > 0:
         x = cloud.receiveFifo.popleft()
-        cubestreamHandler(x[0], x[1], x[2])
+        chloroSampleHandler(x[0], x[1], x[2])
+
     f0 = open('/root/checklife','r')
     g0 = f0.readline()
     f0.close()
@@ -123,9 +103,10 @@ while True:
         break
     time.sleep(.1)
 
+time.sleep(.001)
+
 # Disconnect & kill everything
 cloud.streamUnsubscribe('forest_chloro_readings');
-
 cloud.streamShutdown(0)
 cloud.waitForPikaThread()
 

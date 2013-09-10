@@ -47,6 +47,7 @@ class SensorAdapter(object):
     replyQueue   = [] # An exclusive queue for callback stuff
     rpc_wait     = 0
     rpc_expect   = 0  # 0 = nothing, 1 = new, 2 = reconnect, 3 = alter, 4 = delete
+    rpc_result   = False
     
     shutdownRequested = False
 
@@ -63,11 +64,13 @@ class SensorAdapter(object):
             self.conn = pika.BlockingConnection(pika.ConnectionParameters(host=hostname, credentials=creds))
         except:
             print "conn failed"
+            return False
 
         try:
             self.chan = self.conn.channel()
         except:
             print "channel failed"
+            return False
 
         self.streamState = self.statemap['COOL']
 
@@ -104,7 +107,7 @@ class SensorAdapter(object):
         self.rpc_expect = 1
         self.rpc_wait = 1
         self.chan.basic_publish(exchange='',routing_key='reg_stream', properties=pika.BasicProperties(reply_to=self.replyQueue.method.queue, correlation_id=self.myRxid.__str__()), body=requestString)
-        return
+        return True
 
     def streamReconnect(self, streamUUID):
         '''Try to re-establish a stream that was previously closed'''
@@ -120,7 +123,7 @@ class SensorAdapter(object):
         self.rpc_expect = 2
 	self.rpc_wait = 1
         self.chan.basic_publish(exchange='', routing_key='reg_stream',properties=pika.BasicProperties(reply_to=self.replyQueue.method.queue, correlation_id=self.myRxid.__str__()),body=requestString)
-        return
+        return True
 
     def waitForPikaThread(self):
         while self.rpc_wait == 1:
@@ -199,13 +202,15 @@ class SensorAdapter(object):
 
     def cbNewStream(self, ch, method, props, body):
         if (body[0] == 'Y'):
-                P = body.split(); # ['Y', 'uuid_hex', 'routekey']
-                self.myTxid = long(P[1], 10)
-                self.myRoutekey = P[2]
-                self.streamState = self.statemap['WARM']
+            P = body.split(); # ['Y', 'uuid_hex', 'routekey']
+            self.myTxid = long(P[1], 10)
+            self.myRoutekey = P[2]
+            self.streamState = self.statemap['WARM']
+            self.rpc_result = True
         else:
-                self.myTxid = -1
-                self.streamState = self.statemap['COOL']
+            self.myTxid = -1
+            self.streamState = self.statemap['COOL']
+            self.rpc_result = False
 
         self.rpc_wait = 0
         self.rpc_expect = 0
@@ -213,12 +218,14 @@ class SensorAdapter(object):
 
     def cbReconnectStream(self, ch, method, props, body):
         if (body[0] == 'Y'):
-                P = body.split(); # ['Y', 'queuename']
-                self.myRoutekey = P[1]
-                self.streamState = self.statemap['WARM']
+            P = body.split(); # ['Y', 'queuename']
+            self.myRoutekey = P[1]
+            self.streamState = self.statemap['WARM']
+            self.rpc_result = True
         else:
-                self.myTxid = -1
-                self.streamState = self.statemap['COOL']
+            self.myTxid = -1
+            self.streamState = self.statemap['COOL']
+            self.rpc_result = False
 
         self.rpc_wait = 0
         self.rpc_expect = 0
@@ -226,8 +233,11 @@ class SensorAdapter(object):
 
     def cbAlterStream(self, ch, method, props, body):
         if (body[0] == 'Y'):
-                parts = string.split(body);
-                self.streamState = self.streamState[string.strip(parts[1])]
+            parts = string.split(body);
+            self.streamState = self.streamState[string.strip(parts[1])]
+            self.rpc_result = True
+        else:
+            self.rpc_result = False
 
         self.rpc_wait = 0
         self.rpc_expect = 0
@@ -240,6 +250,11 @@ class SensorAdapter(object):
             self.myTxid       = -1 # no stream exists
             self.myRoutekey   = []
             self.streamState  = self.statemap['COOL']
+            self.rpc_result   = True
+        else:
+            self.rpc_result = False
+
+        return
 
 ################################################################################
 class CloudAdapter(object):
@@ -258,6 +273,7 @@ class CloudAdapter(object):
     inputQueue   = [] # Input handler queue
     rpc_wait     = 0
     rpc_expect   = 0  # 0 = nothing, 1 = new, 2 = reconnect, 3 = alter, 4 = delete
+    rpc_result   = False
 
     # Pika thread control stuff   
     shutdownRequested = False
@@ -280,11 +296,13 @@ class CloudAdapter(object):
             self.conn = pika.BlockingConnection(pika.ConnectionParameters(host=hostname, credentials=creds))
         except:
             print "conn failed"
+            return False
 
         try:
             self.chan = self.conn.channel()
         except:
             print "channel failed"
+            return False
 
         self.streamState = self.statemap['COOL']
 
@@ -333,6 +351,7 @@ class CloudAdapter(object):
 
     def streamReconnect(self, streamUUID):
         '''Try to re-establish a stream that was previously closed'''
+
         if (self.myTxid > 0): # Fail if we already have a stream
             return False
 
@@ -341,7 +360,7 @@ class CloudAdapter(object):
         self.rpc_expect = 2
         self.rpc_wait = 1
         self.chan.basic_publish(exchange='', routing_key='reg_stream',properties=pika.BasicProperties(reply_to=self.inputQueue.method.queue, correlation_id=self.myRxid.__str__()),body=requestString)
-        return
+        return True
 
     def waitForPikaThread(self):
         while self.rpc_wait == 1:
@@ -429,9 +448,11 @@ class CloudAdapter(object):
                 self.myTxid = long(P[1], 10)
                 self.myRoutekey = P[2]
                 self.streamState = self.statemap['WARM']
+                self.rpc_result = True
         else:
                 self.myTxid = -1
                 self.streamState = self.statemap['COOL']
+                self.rpc_result = False
 
         self.rpc_wait = 0
         self.rpc_expect = 0
@@ -442,9 +463,11 @@ class CloudAdapter(object):
                 P = body.split(); # ['Y', 'queuename']
                 self.myRoutekey = P[1]
                 self.streamState = self.statemap['WARM']
+                self.rpc_result = True
         else:
                 self.myTxid = -1
                 self.streamState = self.statemap['COOL']
+                self.rpc_result = False
 
         self.rpc_wait = 0
         self.rpc_expect = 0
@@ -452,8 +475,11 @@ class CloudAdapter(object):
 
     def cbAlterStream(self, ch, method, props, body):
         if (body[0] == 'Y'):
-                parts = string.split(body);
-                self.streamState = self.streamState[string.strip(parts[1])]
+            parts = string.split(body);
+            self.streamState = self.streamState[string.strip(parts[1])]
+            self.rpc_result = True
+        else:
+            self.rpc_result = False
 
         self.rpc_wait = 0
         self.rpc_expect = 0
@@ -466,5 +492,8 @@ class CloudAdapter(object):
             self.myTxid       = -1 # no stream exists
             self.myRoutekey   = []
             self.streamState  = self.statemap['COOL']
+            self.rpc_result   = True
+        else:
+            self.rpc_result   = False
 
 
